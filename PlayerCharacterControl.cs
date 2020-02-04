@@ -9,22 +9,22 @@ public class PlayerCharacterControl : MonoBehaviour
     CapsuleCollider capsule;
     Rigidbody body;
     bool inputJump;
-    public float targetSpeed = 3f, maxAcceleration = 10f;
+    public float runSpeed = 3f, climbSpeed = 0.5f, jumpSpeed = 5f, climbJumpSpeed = 1.5f;
+    public float targetSpeed, maxAcceleration = 10f;
+    public float stepOffset = 0.3f,slopeLimit = 50f;
     [SerializeField, ReadOnly] Vector2 inputStick, inputStickRaw;
     [SerializeField, ReadOnly] public Vector3 velocityWR, accelerationWREstimated, bodyVelocityW;
     DerivativeVector3 accelerationSolverWR = new DerivativeVector3(0.1f);
     DerivativeVector3 attachVelocitySolverW = new DerivativeVector3(0.1f);
 
-    [SerializeField, ReadOnly] public bool isGrounded, canClimb, isClimbing, canLedgeStart, isLedging, willFallFar;
+    [SerializeField, ReadOnly] public bool isGrounded=true, isWalkable,canClimb, isClimbing, canLedgeStart, isLedging, willFallFar,willClimbFall, isJumped;
     //can be climbing while grounded
     Transform attachReference = null, lastAttachReference = null;
     Vector3 lastAttachPositionW, lastAttachPositionR;
-    public float lastGroundTime;
-    bool lastGroundNoJump;
-    Vector3 groundPositionW, groundNormalW, climbNormalW, ledgeTargetW;
+    public float lastGroundTime, cancelClimbTime;
+    //bool lastGroundNoJump;
+    public Vector3 groundPositionW, groundNormalW, climbPositionW,climbNormalW, ledgeTargetW;
     Vector3 gravity;
-    float stepOffset = 0.3f;
-    float slopeLimit = 70f;
     void Start()
     {
         Debug.Assert(transform.lossyScale == Vector3.one);
@@ -35,6 +35,7 @@ public class PlayerCharacterControl : MonoBehaviour
         PhysicMaterial pm = new PhysicMaterial();pm.dynamicFriction = 0f;pm.staticFriction = 0f;pm.frictionCombine = PhysicMaterialCombine.Minimum;capsule.sharedMaterial = pm;
         body.useGravity = false;
         groundNormalW = transform.up;
+        
     }
     void Update()
     {
@@ -42,7 +43,7 @@ public class PlayerCharacterControl : MonoBehaviour
         inputStick = Vector2.ClampMagnitude(new Vector2(Input.GetAxis("Horizontal"),  Input.GetAxis("Vertical")), 1);
         inputStickRaw = Vector2.ClampMagnitude(new Vector2(Input.GetAxisRaw("Horizontal"), Input.GetAxisRaw("Vertical")), 1);
         if (debugRunY) inputStick.y=inputStickRaw.y = 1;
-        if (Input.GetButton("Jump")) inputJump = true;
+        if (Input.GetButtonDown("Jump")) inputJump = true;
 
         //Attach Behavior
         if (attachReference != null)
@@ -58,54 +59,46 @@ public class PlayerCharacterControl : MonoBehaviour
     }
     private void FixedUpdate()
     {
+        //TODO turn when climb
+        //TODO hand ik
+        //TODO stairs bug
+
+
+
+
         gizmosedSphereCastData.Clear();
         gravity = Physics.gravity;
         Vector3 gravityUp = gravity.magnitude > 0 ? -gravity.normalized : transform.up;
         Vector3 inputWRunJump = Vector3.ProjectOnPlane(Camera.main.transform.TransformDirection(new Vector3(inputStick.x, 0, inputStick.y)), transform.up).normalized * inputStick.magnitude;
         Vector3 inputWClimb = transform.TransformDirection(new Vector3(inputStick.x, inputStick.y, 0));
 
-        //Detect Ground
+        //Detect Ground and Walkable
+        //(Ground can be not walkable because of slope)
         RaycastHit groundHit;
         isGrounded = GizmosedSphereCast(transform.TransformPoint(new Vector3(0, capsule.radius * 1.4f, 0)), capsule.radius * .9f, -transform.up, out groundHit, capsule.radius * 1f+stepOffset, Color.black);
         if( Vector3.Dot(velocityWR, groundNormalW) > .2f)isGrounded=false;//use old normal here
-        if (Vector3.Dot(gravityUp, groundHit.normal) < Mathf.Cos(Mathf.Deg2Rad * slopeLimit)) isGrounded = false;
+        isWalkable = isGrounded;
+        if (Vector3.Dot(gravityUp, groundHit.normal) < Mathf.Cos(Mathf.Deg2Rad * slopeLimit)) isWalkable = false;
         groundPositionW = isGrounded ? groundHit.point : transform.position;
         groundNormalW = isGrounded ? groundHit.normal : transform.up;
-        if (isGrounded) { lastGroundTime = 0; lastGroundNoJump = true; } else lastGroundTime += Time.fixedDeltaTime;
-        if (isGrounded) transform.position = Vector3.ProjectOnPlane(transform.position, transform.up) + transform.up * Vector3.Dot(transform.up, groundPositionW);
+        if (isGrounded)  lastGroundTime = 0; else lastGroundTime += Time.fixedDeltaTime;
+        //if (isGrounded && Vector3.Dot(body.velocity,groundNormalW)>=0) transform.position = Vector3.ProjectOnPlane(transform.position, transform.up) + transform.up * Vector3.Dot(transform.up, groundPositionW);
 
         RaycastHit willFallHit;
-        willFallFar = !GizmosedRayCast(groundPositionW + transform.up*capsule.radius * 2.5f+Vector3.ProjectOnPlane(body.velocity,transform.up)*0.3f, -transform.up, out willFallHit, capsule.radius * 3.5f, Color.black);
+        willFallFar = !GizmosedRayCast(groundPositionW + transform.up*capsule.radius * 2.5f+Vector3.ProjectOnPlane(body.velocity,transform.up)*.1f, -transform.up, out willFallHit, capsule.radius * 3.5f, Color.black);
 
         //Process Stairs
         RaycastHit stairsHit;
-        if (isGrounded && Vector3.Dot(inputWRunJump, transform.forward) > 0.1f)
+        if (isWalkable && Vector3.Dot(inputWRunJump, transform.forward) > 0.1f)
         {
             if (!GizmosedSphereCast(transform.TransformPoint(new Vector3(0, capsule.radius * .9f + stepOffset, 0)), capsule.radius * .9f, transform.forward, out stairsHit, 2 * capsule.radius, Color.white))
                 if (GizmosedSphereCast(transform.TransformPoint(new Vector3(0, capsule.radius * .9f + stepOffset, capsule.radius)), capsule.radius * .9f, -transform.up, out stairsHit, Mathf.Max(stepOffset - capsule.radius * .3f, 0), Color.white))
-                    if (Vector3.Dot(gravityUp, stairsHit.normal) > Mathf.Cos(Mathf.Deg2Rad * slopeLimit)) 
-                        transform.position += transform.up * (stepOffset - stairsHit.distance);
+                    if (Vector3.Dot(gravityUp, stairsHit.normal) > Mathf.Cos(Mathf.Deg2Rad * slopeLimit))
+                    {
+                        float toRaise = Vector3.Dot(stairsHit.point - transform.position, transform.up) * 1.1f;
+                        transform.position += transform.up * toRaise;
+                    }
         }
-
-        //Detect Climb
-        RaycastHit climbHit;
-        canClimb = GizmosedSphereCast(transform.TransformPoint(new Vector3(0,capsule.height * .75f,0)), capsule.radius * .9f, transform.forward, out climbHit, capsule.height * .25f, Color.white);
-        if (Vector3.Dot(gravityUp, climbHit.normal) > Mathf.Cos(Mathf.Deg2Rad * slopeLimit)) canClimb = false;
-        climbNormalW = canClimb ? climbHit.normal : -transform.forward;
-
-        if (!isClimbing && canClimb && Vector3.Dot(body.velocity,climbNormalW)<.1f &&lastGroundTime>.5f)
-        {//TODO jump up and climb velo.y<0 and velo.z==0
-            isClimbing = true;
-            inputJump = false;
-        }
-
-        if (!canClimb || isGrounded) isClimbing = false;
-        Vector3 inputW = isClimbing ? inputWClimb : inputWRunJump;
-
-        //TODO clamp climb out
-        //TODO climb other wall
-        //TODO lean and climb
-
 
         //Detece Ledge
         RaycastHit ledgeHit;
@@ -113,83 +106,113 @@ public class PlayerCharacterControl : MonoBehaviour
         bool canLedgeContinue = false;
         //can also vault when running
         if (!GizmosedSphereCast(transform.transform.TransformPoint(new Vector3(0, capsule.height - capsule.radius, 0)), capsule.radius * .9f, transform.forward, out ledgeHit, capsule.radius * 2.1f, Color.white))
-             canLedgeContinue = GizmosedSphereCast(transform.transform.TransformPoint(new Vector3(0, capsule.height - capsule.radius, capsule.radius * 2.1f)), capsule.radius * .9f, -transform.up, out ledgeHit, capsule.height - capsule.radius - stepOffset, Color.white);
+            canLedgeContinue = GizmosedSphereCast(transform.transform.TransformPoint(new Vector3(0, capsule.height - capsule.radius, capsule.radius * 2.1f)), capsule.radius * .9f, -transform.up, out ledgeHit, capsule.height - capsule.radius - stepOffset, Color.white);
+        if (Vector3.Dot(ledgeHit.normal, gravityUp) < Mathf.Cos(Mathf.Deg2Rad * slopeLimit))
+            canLedgeContinue = false;
         canLedgeStart = canLedgeContinue;
         ledgeTargetW = canLedgeContinue ? ledgeHit.point : transform.position;
         Vector3 ledgeVectorW = ledgeTargetW - transform.position;
 
         if (!isLedging && canLedgeStart && inputJump)
-            if(Vector3.Dot(inputW, ledgeVectorW.normalized)>0 || inputJump)
+            if (Vector3.Dot(isClimbing ? inputWClimb : inputWRunJump, ledgeVectorW.normalized) > 0 || inputJump)
             {
                 isLedging = true;
                 inputJump = false;
             }
         if (!canLedgeContinue) isLedging = false;
-
+        if (isLedging) isClimbing = isWalkable = false;
         Vector3 ledgePlaneW = Vector3.Cross(ledgeVectorW, transform.right).normalized;
         //ledge and climb, ground can coexist
 
+        //Detect Climb
+        RaycastHit climbHit;
+        canClimb = GizmosedSphereCast(transform.TransformPoint(new Vector3(0,capsule.height * .7f,0)), capsule.radius * .9f, transform.forward, out climbHit, capsule.height * .25f, Color.white);
+        //TODO check neighs
+        climbNormalW = canClimb ? climbHit.normal : -transform.forward;
+        climbPositionW = canClimb ? climbHit.point : transform.position;
+        if (Vector3.Dot(gravityUp, climbHit.normal) > Mathf.Cos(Mathf.Deg2Rad * slopeLimit)) canClimb = false;
+        if (isGrounded) canClimb = false;
+
+        if (!canClimb) isClimbing = false;
+        if (!canClimb || isClimbing) cancelClimbTime = 0; else cancelClimbTime -= Time.fixedDeltaTime;
+        if (canClimb && Vector3.Dot(body.velocity, climbNormalW) <.1f && cancelClimbTime <= 0)
+        {
+            if (!isClimbing) velocityWR = Vector3.zero;
+            isClimbing = true;
+        }
+
+        RaycastHit willClimbFallHit;
+        willClimbFall= !GizmosedRayCast(transform.TransformPoint(new Vector3(0, capsule.height * .7f, 0))+inputWClimb*climbSpeed*.1f, transform.forward, out willClimbFallHit, capsule.height * .25f+capsule.radius, Color.white);
+        if (willClimbFall)
+        {
+            inputWClimb = Vector3.zero;
+        }
+        
+
+
+
+
+        //TODO clamp climb out
+        //TODO climb other wall
+        //TODO lean and climb
+
+
+
+
 
         //Process Jump
+        if (isGrounded || isLedging || isClimbing) isJumped = false;
         if (inputJump)
         {
-            if(isGrounded || lastGroundTime<.3f && lastGroundNoJump)
+            if(isGrounded || (lastGroundTime<.1f && !isJumped))
             {
                 if (!willFallFar || !isGrounded)
                 {
-                    velocityWR += transform.up * 5f;
+                    velocityWR += transform.up * jumpSpeed;
                     isClimbing = false;
                     isGrounded = false;
+                    isWalkable = false;
                     //todo anticipitation
                     inputJump = false;
-                    lastGroundNoJump = false;
+                    isJumped = true;
+                    cancelClimbTime = .1f;
                 }
-                else inputJump = true;//wait for next frame
+                else inputJump = inputJump = true;//wait for next frame
             }
             else if (isClimbing)
             {
                 if (inputStickRaw.magnitude < 0.3f)
-                    velocityWR = -transform.forward * 3f;
+                {
+                    isClimbing = false;
+                    inputJump = false;
+
+                    velocityWR += Vector3.zero;
+                    cancelClimbTime = float.PositiveInfinity;
+                }
                 else
                 {
+                    inputJump = false;
+                    /*
+                    isClimbing = false;
+                    inputJump = false;
+                    isClimbJumping = true;
+
+                    cancelClimbTime = .5f;
                     Vector3 inputWClimbRaw = transform.TransformDirection(new Vector3(inputStickRaw.x, inputStickRaw.y, 0));
-                    velocityWR += Vector3.ProjectOnPlane(inputWClimbRaw, climbNormalW).normalized* inputStickRaw.magnitude * 5f;
+                    velocityWR += Vector3.ProjectOnPlane(inputWClimbRaw, climbNormalW).normalized * inputStickRaw.magnitude * climbJumpSpeed;
+                    velocityWR += Vector3.ProjectOnPlane(-gravity, climbNormalW) * 2 * cancelClimbTime * .1f;
+                    */
                 }
 
-                isClimbing = false;
-                isGrounded = false;
-                inputJump = false;
             }
             else
-                inputJump = false;
+                inputJump = false;//Discard trigger
         }
-
-        //ClimbJump
-
-        //Jump Anticipation and Delay
-
-
-
-
-
-
-
-        //Rotation Update
-        //TODO rotate when climb
-        //TODO rotate when jump
-        //float velocityAngle = Vector3.ProjectOnPlane(body.velocity, transform.up).magnitude > .1f ? Mathf.Rad2Deg * Mathf.Atan2(Vector3.Dot(velocityWR, transform.right), Vector3.Dot(velocityWR, transform.forward)) : 0;
-        Vector3 targetRotationForwardW = Vector3.ProjectOnPlane(transform.forward, gravityUp).normalized;
-        if (targetRotationForwardW.magnitude==0) targetRotationForwardW = Vector3.Dot(gravityUp, targetRotationForwardW) > 0 ? -transform.up : transform.up;
-        if (Vector3.ProjectOnPlane(body.velocity, gravityUp).magnitude > .5f) targetRotationForwardW = Vector3.ProjectOnPlane(body.velocity, gravityUp).normalized;
-        if (Vector3.ProjectOnPlane(inputWRunJump, gravityUp).magnitude > .5f) targetRotationForwardW = Vector3.ProjectOnPlane(inputWRunJump, gravityUp).normalized;
-        if (isClimbing && !isLedging) targetRotationForwardW =-climbNormalW;
-        Quaternion targetRotation=Quaternion.LookRotation(targetRotationForwardW, gravityUp);
-        transform.rotation=Quaternion.RotateTowards(transform.rotation, targetRotation, Time.fixedDeltaTime * 720);
 
         //Attach Behavior
         //Executes in Update
         attachReference = null;
-        if (isGrounded) attachReference = groundHit.transform;
+        if (isWalkable) attachReference = groundHit.transform;
         if (isClimbing) attachReference = climbHit.transform; //Climbing attach has higher priority
         if (attachReference != null && attachReference != lastAttachReference) { lastAttachPositionR = attachReference.InverseTransformPoint(transform.position); lastAttachPositionW = transform.position; }
         lastAttachReference = attachReference;
@@ -198,18 +221,40 @@ public class PlayerCharacterControl : MonoBehaviour
         //Velocity Update
         //TODO bug when wall perpendicular to camera solution input align player
         //if(isClimbing)inputW = transform.TransformDirection(new Vector3(inputRaw.x, inputRaw.y,0 ));
+        targetSpeed = isClimbing ? climbSpeed : runSpeed;//will be more
         Vector3 inputPlaneW = isClimbing ? transform.forward : transform.up;
-        Vector3 velocityPlaneW = isGrounded ? groundNormalW : (isClimbing ? climbNormalW : transform.up);
+        Vector3 velocityPlaneW = isWalkable ? groundNormalW : (isClimbing ? climbNormalW : transform.up);
+        float velocityPlaneDistance = isWalkable ? Vector3.Dot(transform.position - groundPositionW, transform.up) : (isClimbing ? Vector3.Dot(transform.position - climbPositionW, climbNormalW) - capsule.radius : 0);
         if (isLedging) velocityPlaneW = ledgePlaneW;
-
-        Vector3 targetProjectedVelocityW = targetSpeed * Vector3.ProjectOnPlane(Vector3.ProjectOnPlane(inputW, inputPlaneW), velocityPlaneW).normalized * inputW.magnitude;
-        if (!isClimbing && !isGrounded && !isLedging) velocityWR += gravity * Time.fixedDeltaTime;
-        else velocityWR = Vector3.ProjectOnPlane(velocityWR, velocityPlaneW);
+        
+        Vector3 targetProjectedVelocityW = targetSpeed * Vector3.ProjectOnPlane(Vector3.ProjectOnPlane(isClimbing ? inputWClimb : inputWRunJump, inputPlaneW), velocityPlaneW).normalized * inputStick.magnitude;
+        if (isClimbing || isWalkable || isLedging)
+        {
+            float vy = Vector3.Dot(velocityWR, velocityPlaneW);
+            vy = Mathf.Clamp(vy, -velocityPlaneDistance / Time.fixedDeltaTime, 0);
+            velocityWR = Vector3.ProjectOnPlane(velocityWR, velocityPlaneW) + vy * velocityPlaneW;
+        }
+        else
+        {
+            velocityWR += gravity * Time.fixedDeltaTime;
+        }
         if (isLedging) velocityWR = ledgeVectorW.normalized * targetSpeed;
         velocityWR += Vector3.ClampMagnitude(targetProjectedVelocityW - Vector3.ProjectOnPlane(velocityWR, velocityPlaneW), Time.fixedDeltaTime * maxAcceleration);
         accelerationWREstimated = accelerationSolverWR.Update(velocityWR + attachVelocitySolverW.derivative, Time.fixedDeltaTime);//should before velocity update
         bodyVelocityW = body.velocity;
         body.velocity = velocityWR;
+
+        //Rotation Update
+        //TODO rotate when climb
+        //TODO rotate when jump
+        //float velocityAngle = Vector3.ProjectOnPlane(body.velocity, transform.up).magnitude > .1f ? Mathf.Rad2Deg * Mathf.Atan2(Vector3.Dot(velocityWR, transform.right), Vector3.Dot(velocityWR, transform.forward)) : 0;
+        Vector3 targetRotationForwardW = Vector3.ProjectOnPlane(transform.forward, gravityUp).normalized;
+        if (targetRotationForwardW.magnitude == 0) targetRotationForwardW = Vector3.Dot(gravityUp, targetRotationForwardW) > 0 ? -transform.up : transform.up;
+        if (Vector3.ProjectOnPlane(body.velocity, gravityUp).magnitude > .5f) targetRotationForwardW = Vector3.ProjectOnPlane(body.velocity, gravityUp).normalized;
+        if (Vector3.ProjectOnPlane(inputWRunJump, gravityUp).magnitude > .5f) targetRotationForwardW = Vector3.ProjectOnPlane(inputWRunJump, gravityUp).normalized;
+        if (isClimbing && !isLedging) targetRotationForwardW = -climbNormalW;
+        Quaternion targetRotation = Quaternion.LookRotation(targetRotationForwardW, gravityUp);
+        transform.rotation = Quaternion.RotateTowards(transform.rotation, targetRotation, Time.fixedDeltaTime * 720);
 
 
     }
@@ -259,6 +304,8 @@ public class PlayerCharacterControl : MonoBehaviour
         Gizmos.color = Color.red;
         Gizmos.DrawLine(transform.TransformPoint(new Vector3(0,capsule.height*.5f,0)), transform.TransformPoint(new Vector3(0, capsule.height * .5f, 0)) + accelerationWREstimated / maxAcceleration);
         Gizmos.DrawLine(transform.position, ledgeTargetW);
+        Gizmos.color = Color.blue;
+        Gizmos.DrawLine(transform.TransformPoint(new Vector3(0, capsule.height * .5f, 0)), transform.TransformPoint(new Vector3(0, capsule.height * .5f, 0)) + velocityWR / runSpeed);
     }
     #endregion
 
