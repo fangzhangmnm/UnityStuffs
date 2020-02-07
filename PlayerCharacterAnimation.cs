@@ -7,11 +7,11 @@ public class PlayerCharacterAnimation : MonoBehaviour
 {
     PlayerCharacterControl control;
     Animator anim;
+    CapsuleCollider capsule;
     void Start()
     {
         control = GetComponent<PlayerCharacterControl>();
         anim = GetComponent<Animator>();
-
     }
     private void Update()
     {
@@ -25,7 +25,9 @@ public class PlayerCharacterAnimation : MonoBehaviour
         if (Input.GetButtonDown("Fire1"))
             anim.SetTrigger("Attack");
     }
+    Transform attachReference = null, lastAttachReference = null;bool updateAttach;
     Vector3 leftFootTarget, rightFootTarget, leftHandTarget, rightHandTarget, bodyTarget;
+    Vector3 leftHandAttachWR, rightHandAttachWR, leftFootAttachWR, rightFootAttachWR;
     DampingVector3 leftFootLocal = new DampingVector3(0.05f, 1f), rightFootLocal = new DampingVector3(0.05f, 1f), leftHandLocal = new DampingVector3(0.05f, 1f), rightHandLocal = new DampingVector3(0.05f, 1f), 
         bodyLocal = new DampingVector3(0.05f, 1f);
     DampingFloat bodyDownLocal = new DampingFloat(0.3f, 1f), bodyTiltX = new DampingFloat(0.3f, 1f), bodyTiltZ = new DampingFloat(0.3f, 1f);
@@ -35,6 +37,7 @@ public class PlayerCharacterAnimation : MonoBehaviour
     float maxFootRaise = 0.4f;
     private void OnAnimatorIK(int layerIndex)
     {
+
         anim.SetIKPositionWeight(AvatarIKGoal.LeftFoot, 1);
         anim.SetIKPositionWeight(AvatarIKGoal.RightFoot, 1);
         anim.SetIKRotationWeight(AvatarIKGoal.LeftFoot, 1);
@@ -44,16 +47,30 @@ public class PlayerCharacterAnimation : MonoBehaviour
         anim.SetIKRotationWeight(AvatarIKGoal.LeftHand, 0);//TODO
         anim.SetIKRotationWeight(AvatarIKGoal.RightHand, 0);
 
-        leftFootAnimPos = anim.GetBoneTransform(HumanBodyBones.LeftFoot).position - transform.up * anim.leftFeetBottomHeight;
-        rightFootAnimPos = anim.GetBoneTransform(HumanBodyBones.RightFoot).position - transform.up * anim.rightFeetBottomHeight;
         leftHandAnimPos = anim.GetBoneTransform(HumanBodyBones.LeftHand).position;
         rightHandAnimPos = anim.GetBoneTransform(HumanBodyBones.RightHand).position;
+        leftFootAnimPos = anim.GetBoneTransform(HumanBodyBones.LeftFoot).position - transform.up * anim.leftFeetBottomHeight;
+        rightFootAnimPos = anim.GetBoneTransform(HumanBodyBones.RightFoot).position - transform.up * anim.rightFeetBottomHeight;
         bodyAnimPos = anim.bodyPosition;
-        leftFootTarget = leftFootAnimPos;
-        rightFootTarget = rightFootAnimPos;
+
         leftHandTarget = leftHandAnimPos;
         rightHandTarget = rightHandAnimPos;
+        leftFootTarget = leftFootAnimPos;
+        rightFootTarget = rightFootAnimPos;
         bodyTarget = bodyAnimPos;
+
+        attachReference = control.attachReference;
+        updateAttach =  attachReference!=lastAttachReference && attachReference!=null;
+        lastAttachReference = attachReference;
+
+        if (updateAttach)
+        {
+            leftHandAttachWR = attachReference.InverseTransformPoint(leftHandAnimPos);
+            rightHandAttachWR = attachReference.InverseTransformPoint(rightHandAnimPos);
+            leftFootAttachWR = attachReference.InverseTransformPoint(leftFootAnimPos);
+            rightFootAttachWR = attachReference.InverseTransformPoint(rightFootAnimPos);
+        }
+
         if (needInitIK)
         {
             leftFootLocal.current = transform.InverseTransformPoint(leftFootTarget);
@@ -87,10 +104,29 @@ public class PlayerCharacterAnimation : MonoBehaviour
             tiltZ = accX * 10f;
             tiltX = accZ * (accZ > 0 ? 20f : 10f);
         }
+        if (attachReference != null)
+        {
+            bool leftHandAttach, rightHandAttach, leftFootAttach, rightFootAttach;
+            if (control.isClimbing)
+            {
+
+            }
+            /*
+            RaycastHit hitInfo;
+            Vector3 castDir = control.isClimbing ? transform.forward : -transform.up;
+
+
+            AvatarIKGoal onWallHand = Vector3.Dot(leftHandAnimPos - rightHandAnimPos, transform.forward) > 0 ? AvatarIKGoal.LeftHand : AvatarIKGoal.RightHand;
+            AvatarIKGoal onWallFoot = Vector3.Dot(leftFootAnimPos - rightFootAnimPos, transform.forward) > 0 ? AvatarIKGoal.LeftFoot : AvatarIKGoal.RightFoot;
+            bool leftHandOnWall = Physics.Raycast(anim.GetIKPosition(AvatarIKGoal.LeftHand) - transform.forward * .2f, transform.forward, out hitInfo, .4f);
+            bool rightHandOnWall = Physics.Raycast(anim.GetIKPosition(AvatarIKGoal.LeftHand) - transform.forward * .2f, transform.forward, out hitInfo, .4f);
+            */
+        }
+
         if (control.isLedging)
         {
-            leftHandTarget = control.ledgeTargetW;
-            rightHandTarget = control.ledgeTargetW;
+            leftHandTarget = control.attachReference.TransformPoint( control.ledgeTargetR);
+            rightHandTarget = leftHandTarget;
         }
         anim.bodyRotation = anim.bodyRotation * Quaternion.Euler(bodyTiltX.Update(tiltX, Time.deltaTime), 0, bodyTiltZ.Update(tiltZ, Time.deltaTime));
 
@@ -109,5 +145,6 @@ public class PlayerCharacterAnimation : MonoBehaviour
         anim.SetIKPosition(AvatarIKGoal.RightFoot, transform.TransformPoint(rightFootLocal.Update(transform.InverseTransformPoint(rightFootTarget), Time.deltaTime)) + transform.up * anim.rightFeetBottomHeight);
         anim.SetIKPosition(AvatarIKGoal.LeftHand, transform.TransformPoint(leftHandLocal.Update(transform.InverseTransformPoint(leftHandTarget), Time.deltaTime)));
         anim.SetIKPosition(AvatarIKGoal.RightHand, transform.TransformPoint(rightHandLocal.Update(transform.InverseTransformPoint(rightHandTarget), Time.deltaTime)));
+
     }
 }
