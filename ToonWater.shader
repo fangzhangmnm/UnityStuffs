@@ -17,12 +17,12 @@ Shader "Custom/ToonWater"
     }
     SubShader
     {
+		Tags
+		{
+			"Queue" = "Transparent"
+		}
         Pass
         {
-            Tags
-            {
-                "Queue" = "Transparent"
-            }
             Blend SrcAlpha OneMinusSrcAlpha
             ZWrite Off
 			CGPROGRAM
@@ -79,28 +79,37 @@ Shader "Custom/ToonWater"
             float2 _SurfaceNoiseScroll;
             sampler2D _CameraDepthTexture;
             float _SurfaceDistortionAmount;
-            sampler2D _CameraNormalsTexture;
             sampler2D _CameraDepthNormalsTexture;
 
             float4 _FoamColor;
+
+			float3 getCamPos(sampler2D _CameraDepthTexture, float2 screenPosition) {
+				float depth10 = tex2D(_CameraDepthTexture, screenPosition);
+				float4 ndc = float4(2 * screenPosition - 1, 1 - 2 * depth10, 1);
+				float4 camPos = mul(unity_CameraInvProjection, ndc);
+				return camPos.xyz / camPos.w;
+			}
+			float3 getCamNormal(sampler2D _CameraDepthTexture, float2 screenPosition) {
+				float3 p0 = getCamPos(_CameraDepthTexture, screenPosition);
+				float3 p1 = getCamPos(_CameraDepthTexture, float2(screenPosition.x+.002, screenPosition.y));
+				float3 p2 = getCamPos(_CameraDepthTexture, float2(screenPosition.x, screenPosition.y+.002));
+				return normalize(cross(p1 - p0, p2 - p0));
+				//float3 p3 = getCamPos(_CameraDepthTexture, float2(screenPosition.x - .002, screenPosition.y));
+				//float3 p4 = getCamPos(_CameraDepthTexture, float2(screenPosition.x, screenPosition.y - .002));
+				//return normalize(cross(p1 - p0, p2 - p0)+cross(p3-p0,p4-p0));
+			}
             float4 frag (v2f i) : SV_Target
-            {
-                float existingDepth01 = tex2Dproj(_CameraDepthTexture, UNITY_PROJ_COORD(i.screenPosition)).r;
-                float3 existingNormal = tex2Dproj(_CameraNormalsTexture, UNITY_PROJ_COORD(i.screenPosition));
-                float existingDepthLinear = LinearEyeDepth(existingDepth01);
-
-                /*float4 depthNormal=tex2Dproj(_CameraDepthNormalsTexture, UNITY_PROJ_COORD(i.screenPosition));
-                float3 normal;
-                float depth;
-                DecodeDepthNormal(depthNormal, depth, normal);
-                existingDepthLinear = depth * _ProjectionParams.z;*/
-
+            { 
+				float2 screenPosition = i.screenPosition.xy / i.screenPosition.w;
+				float existingDepthLinear = LinearEyeDepth(tex2D(_CameraDepthTexture, screenPosition));
+				float3 existingNormal = getCamNormal(_CameraDepthTexture, screenPosition);
                 float depthDifference = existingDepthLinear - i.screenPosition.w;
                 float waterDepthDifference01 = saturate(depthDifference / _DepthMaxDistance);
                 float4 waterColor = lerp(_DepthGradientShallow, _DepthGradientDeep, waterDepthDifference01);
 
 
                 float3 normalDot = saturate(dot(existingNormal, i.viewNormal));
+
                 float foamDistance = lerp(_FoamMaxDistance, _FoamMinDistance, normalDot);
                 float foamDepthDifference01 = saturate(depthDifference / foamDistance);
 
