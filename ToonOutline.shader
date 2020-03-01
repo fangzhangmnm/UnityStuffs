@@ -75,7 +75,7 @@ Shader "Custom/ToonOutline"
                 float NdotL=dot(_WorldSpaceLightPos0,normal);
 
                 float shadow = SHADOW_ATTENUATION(i);
-                float lightIntensity=smoothstep(-_Smooth,_Smooth,(NdotL*shadow+_Bias));
+                float lightIntensity=smoothstep(-_Smooth,_Smooth,(NdotL*shadow+_Bias-_Smooth));
                 float4 light=lightIntensity*_LightColor0;
 
                 float3 viewDir=normalize(i.viewDir);
