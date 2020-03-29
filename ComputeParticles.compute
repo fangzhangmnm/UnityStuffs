@@ -1,0 +1,181 @@
+﻿//http://kylehalladay.com/blog/tutorial/2014/06/27/Compute-Shaders-Are-Nifty.html
+//https://gameinstitute.qq.com/community/detail/123255
+//https://www.reddit.com/r/Unity3D/comments/7ppldz/physics_simulation_on_gpu_with_compute_shader_in/
+//https://docs.microsoft.com/en-us/windows/win32/direct3dhlsl/sm5-object-rwtexture2d
+
+struct particle{
+	float2 x;
+	float2 v;
+	float2 a;
+	float radius;
+	float dummy;
+};
+RWStructuredBuffer<particle> particles;
+float dt;
+float2 bounds_min, bounds_size;
+int2 grid_res;
+uint maxParticles;
+
+
+#pragma kernel Verlet
+[numthreads(128,1,1)]
+void Verlet(uint3 id: SV_DispatchThreadID) {
+	if (id.x >= maxParticles)return;
+	particle p = particles[id.x];
+	p.v += dt * p.a;
+	p.x += dt * p.v;
+	particles[id.x] = p;
+}
+
+RWTexture2D<uint4> grid_ptr;
+RWTexture2D<float4> debug_tex;
+int p2g_phase;
+#pragma kernel P2G
+[numthreads(128, 1, 1)]
+void P2G(uint3 id: SV_DispatchThreadID) {
+	if (id.x >= maxParticles)return;
+	uint2 uv = clamp(floor((particles[id.x].x - bounds_min) / bounds_size * grid_res),int2(0,0), grid_res - int2(1, 1));
+	uint4 ptr = grid_ptr[uv];
+	if (p2g_phase == 0) {
+		ptr.x = id.x;
+;	}
+	else if (p2g_phase == 1) {
+		if (ptr.x == id.x) return;
+		ptr.y = id.x;
+	}
+	else if (p2g_phase == 2) {
+		if (ptr.x == id.x || ptr.y==id.x) return;
+		ptr.z = id.x;
+	}
+	else if (p2g_phase == 3) {
+		if (ptr.x == id.x || ptr.y == id.x || ptr.z == id.x) return;
+		ptr.w = id.x;
+	}
+	grid_ptr[uv] = ptr;
+}
+
+#pragma kernel CleanGrid
+[numthreads(16, 16, 1)]
+void CleanGrid(uint3 id: SV_DispatchThreadID) {
+	grid_ptr[id.xy] = uint4(0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF);
+	debug_tex[id.xy] = float4(0,0,0,1);
+}
+float resistence;
+float attraction;
+float2 gravity;
+float drag;
+float2 DoPair(uint id_a, uint id_b) {
+	if (id_a == id_b)return float2(0, 0);
+	if (id_b == 0xffffffff)return float2(0, 0);
+	particle a = particles[id_a];
+	particle b = particles[id_b];
+	float2 rba = a.x - b.x;
+	float r = length(rba);
+	float d = a.radius + b.radius;
+	float r1 = r / d;
+	float2 r1ba = rba / d;
+	if (r == 0)return float2(0, 0);
+	else if (r1 < 1)
+		return resistence * (1 - r1)*r1ba;
+	else if (r1 < 2)
+		return attraction * ((r1 - 1.5)*(r1 - 1.5) - 0.25) / 0.25*r1ba;
+	else
+		return float2(0, 0);
+}
+float2 DoGrid(uint id_a, uint4 ptr) {
+	return DoPair(id_a, ptr.x)
+		+DoPair(id_a, ptr.y)
+		+DoPair(id_a, ptr.z)
+		+DoPair(id_a, ptr.w);
+}
+
+#pragma kernel Interaction
+[numthreads(128, 1, 1)]
+void Interaction(uint3 id: SV_DispatchThreadID) {
+	if (id.x >= maxParticles)return;
+	particle p = particles[id.x];
+
+	int2 uv = clamp(floor((p.x - bounds_min) / bounds_size * grid_res), int2(0, 0), grid_res-int2(1,1));//inclusive
+	int2 uv1 = max(0, uv - int2(2, 2));
+	int2 uv2 = min(grid_res, uv + int2(3, 3));
+	int2 uv3;
+	p.a = float2(0, 0);
+	for (uv3.x = uv1.x; uv3.x < uv2.x; ++uv3.x)
+		for (uv3.y = uv1.y; uv3.y < uv2.y; ++uv3.y)
+			p.a+=DoGrid(id.x, grid_ptr[uv3]);
+	p.a += gravity;
+	p.a -= drag * p.v;//not quite right. v is not at the same time
+
+	if (p.x.x < bounds_min.x && p.v.x<0) {
+		p.v.x = -p.v.x;
+		p.x.x = bounds_min.x;
+	}
+	else if (p.x.x > bounds_min.x + bounds_size.x && p.v.x>0) {
+		p.v.x = -p.v.x;
+		p.x.x = bounds_min.x + bounds_size.x;
+	}
+
+	if (p.x.y < bounds_min.y&& p.v.y<0) {
+		p.v.y = -p.v.y;
+		p.x.y = bounds_min.y;
+	}
+	else if (p.x.y > bounds_min.y + bounds_size.y && p.v.y>0) {
+		p.v.y = -p.v.y;
+		p.x.y = bounds_min.y + bounds_size.y;
+	}
+
+	particles[id.x] = p;
+	/*
+	uint4 ptr = grid_ptr[uv];
+	if (ptr.x == id.x)
+		particles[id.x].dummy = 0;
+	else if (ptr.y == id.x)
+		particles[id.x].dummy = 0.25;
+	else if (ptr.z == id.x)
+		particles[id.x].dummy = 0.5;
+	else if (ptr.w == id.x)
+		particles[id.x].dummy = 0.75;
+	else
+		particles[id.x].dummy = 1;
+		*/
+}
+
+
+
+
+struct instance_t {
+	float3 pos;
+	float scale;
+	float4 rot;
+	float4 color;
+};
+float3 parent_pos;
+float parent_scale;
+float4 parent_rot;
+//https://gist.github.com/mattatz/40a91588d5fb38240403f198a938a593#file-quaternion-hlsl
+float4 qmul(float4 q1, float4 q2)
+{
+	return float4(
+		q2.xyz * q1.w + q1.xyz * q2.w + cross(q1.xyz, q2.xyz),
+		q1.w * q2.w - dot(q1.xyz, q2.xyz)
+		);
+}
+float3 rotate_vector(float3 v, float4 r)
+{
+	float4 r_c = r * float4(-1, -1, -1, 1);
+	return qmul(r, qmul(float4(v, 0), r_c)).xyz;
+}
+
+RWStructuredBuffer<instance_t> instances;
+#pragma kernel WriteInstanceBuffer
+[numthreads(128,1,1)]
+void WriteInstanceBuffer(uint3 id: SV_DispatchThreadID) {
+	instances[id.x].pos = rotate_vector(parent_scale*float3(particles[id.x].x.xy, 0), parent_rot) + parent_pos;
+	instances[id.x].scale = parent_scale*2*particles[id.x].radius;
+	instances[id.x].rot = parent_rot;
+	if(clamp(5,0,4)==4)
+		instances[id.x].color = float4(1,1,1,1);
+	else
+		instances[id.x].color = float4(0, 1, 1, 1);
+
+}
